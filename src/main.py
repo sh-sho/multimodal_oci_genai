@@ -9,10 +9,14 @@ from oci.generative_ai_inference.models import (
     LlamaLlmInferenceRequest,
     GenericChatRequest,
     TextContent,
+    ImageContent,
+    ImageUrl,
     Message,
+    ChatContent,
     BaseChatRequest
 )
 from oci.generative_ai_inference import GenerativeAiInferenceClient
+from oci.object_storage import ObjectStorageClient
 import oracledb
 import requests
 from langchain_community.chat_models import ChatOCIGenAI
@@ -35,6 +39,9 @@ import os
 import base64
 from tabulate import tabulate
 from dotenv import load_dotenv, find_dotenv
+
+from utils.utils import get_embedding, summarize_image_to_text, summarize_text, upload_image_to_oci
+
 _ = load_dotenv(find_dotenv())
 oracledb.init_oracle_client()
 
@@ -45,8 +52,13 @@ DSN = os.environ.get("DSN")
 OCI_CONFIG_FILE = "~/.oci/config"
 OCI_COMPARTMENT_ID = os.getenv("OCI_COMPARTMENT_ID")
 OCI_GENAI_ENDPOINT = os.getenv("OCI_GENAI_ENDPOINT")
-config = oci.config.from_file(file_location=OCI_CONFIG_FILE, profile_name="OSAKA")
-generative_ai_inference_client = GenerativeAiInferenceClient(config, sevice_endpoint=OCI_GENAI_ENDPOINT)
+OCI_OS_NAMESPACE = os.getenv("OCI_OS_NAMESPACE")
+OCI_OS_BUCKET_NAME = os.getenv("OCI_OS_BUCKET_NAME")
+OCI_OS_BUCKET_URL = os.getenv("OCI_OS_BUCKET_URL")
+
+config_osaka = oci.config.from_file(file_location=OCI_CONFIG_FILE, profile_name="OSAKA")
+config = oci.config.from_file(file_location=OCI_CONFIG_FILE, profile_name="DEFAULT")
+generative_ai_inference_client = GenerativeAiInferenceClient(config_osaka, sevice_endpoint=OCI_GENAI_ENDPOINT)
 model_id="ocid1.generativeaimodel.oc1.ap-osaka-1.amaaaaaask7dceyayobenuynf4om42tyrr7scxwijpzwfajc6i6w5wjcmjbq"
 
 preamble = """
@@ -146,11 +158,12 @@ def extract_tables_and_images(file_path, output_dir="images"):
 
   for sheet_name in wb.sheetnames:
     ws = wb[sheet_name]
-
+    print(f"worksheet: {ws}")
     # --- 表の抽出 ---
     df = pd.read_excel(file_path, sheet_name=sheet_name)
     if not df.empty:
       markdown = tabulate(df.head(10), headers='keys', tablefmt='github')
+      print(f"Markdown Table:\n{markdown}")
       result.append({
         "type": "table",
         "sheet": sheet_name,
@@ -168,6 +181,7 @@ def extract_tables_and_images(file_path, output_dir="images"):
         img_name = f"{sheet_name}_{image.anchor._from.row}_{image.anchor._from.col}.png"
         img_path = os.path.join(output_dir, img_name)
         img.save(img_path)
+        print(f"Image Path: {img_path}")
 
         # Base64に変換（任意）
         with open(img_path, "rb") as f:
@@ -201,68 +215,81 @@ def save_file_info(file_path):
     print(f"Oracle error message: {error.message}")
     return None
 
-def save_content(file_id, markdown, summary, embedding, content_type="table"):
+def save_docs_content(file_id, markdown, summary, embedding):
+  sql = """
+          INSERT INTO docs_contents (file_id, summary, embedding, markdown)
+          VALUES (:file_id, :summary, :embedding, :markdown)
+          """
+  params = {
+    "file_id": file_id,
+    "summary": summary,
+    "embedding": str(embedding),
+    "markdown": markdown,
+  }
   try:
     with oracledb.connect(user=UN, password=PW, dsn=DSN) as conn:
-      cur = conn.cursor()
-      embedding_str = ",".join(map(str, embedding))
-      cur.execute("""
-        INSERT INTO file_contents (file_id, content_type, markdown, summary, embedding)
-        VALUES (:1, :2, :3, :4, :5)
-      """, [file_id, content_type, markdown, summary, embedding_str])
-      conn.commit()
+      with conn.cursor() as cursor:
+        cursor.execute(sql, params)
+        print(f"Success insert {file_id} into docs_contents")
+        conn.commit()
   except oracledb.DatabaseError as e:
     error, = e.args
     print(f"Error at save_content")
     print(f"Oracle error code: {error.code}")
     print(f"Oracle error message: {error.message}")
+  except Exception as e:
+    print(f"Error:save_docs_content: {e}")
+    return None
 
-def summarize_text(text):
-  prompt = PromptTemplate(
-      input_variables=["text"],
-      template="以下の内容を要約してください:\n{text}"
-  )
-  llm = ChatOCIGenAI(
-    model_id="cohere.command-r-08-2024",
-    service_endpoint="https://inference.generativeai.ap-osaka-1.oci.oraclecloud.com",
-    compartment_id=OCI_COMPARTMENT_ID,
-    model_kwargs={"temperature": 0.7, "max_tokens": 500},
-    )
-  # chain = LLMChain(llm=llm, prompt=prompt)
-  chain = ({"text": RunnablePassthrough() } 
-           | prompt 
-           | llm 
-           | StrOutputParser()
-  )
-  result = chain.invoke(text)
-  return result
+def save_image_content(file_id, image_path, image_url, summary, embedding):
+  sql = """
+        INSERT INTO image_contents (file_id, image_url, summary, embedding, image_blob)
+        VALUES (:file_id, :image_url, :summary, :embedding, empty_blob())
+        returning image_blob into :blobdata
+      """
+  with open(image_path, "rb") as img_file:
+    image_blob = base64.b64encode(img_file.read()).decode("utf-8")
+  
+  try:
+    with oracledb.connect(user=UN, password=PW, dsn=DSN) as conn:
+      with conn.cursor() as cursor:
+        blobdata = cursor.var(oracledb.DB_TYPE_BLOB)
+        params = {
+          'file_id': file_id,
+          'image_url': image_url,
+          'summary': summary,
+          'embedding': str(embedding),
+          'blobdata': blobdata
+        }
+        cursor.execute(sql, params)
+        blobdata.setvalue(0, image_blob)
+        
+        print(f"Success insert {file_id} into image_contents")
+        conn.commit()
+  except oracledb.DatabaseError as e:
+    error, = e.args
+    print(f"Error at save_content")
+    print(f"Oracle error code: {error.code}")
+    print(f"Oracle error message: {error.message}")
+  except Exception as e:
+    print(f"Error:save_image_content: {e}")
+    return None
 
-def summarize_image_to_text(text):
-  prompt = PromptTemplate(
-      input_variables=["text"],
-      template="以下の内容を要約してください:\n{text}"
-  )
-  llm = ChatOCIGenAI(
-    model_id="cohere.command-r-08-2024",
-    service_endpoint="https://inference.generativeai.ap-osaka-1.oci.oraclecloud.com",
-    compartment_id=OCI_COMPARTMENT_ID,
-    model_kwargs={"temperature": 0.7, "max_tokens": 500},
-    )
-  chain = ({"text": RunnablePassthrough() } 
-           | prompt 
-           | llm 
-           | StrOutputParser()
-  )
-  result = chain.invoke(text)
-  return result
-
-def get_embedding(text):
-  embeddings = OCIGenAIEmbeddings(
-    model_id="cohere.embed-multilingual-v3.0",
-    service_endpoint="https://inference.generativeai.ap-osaka-1.oci.oraclecloud.com",
-    compartment_id=OCI_COMPARTMENT_ID,
-  )
-  return embeddings.embed_query(text)
+def summarize_to_db_and_upload_image(image_path, object_name=None):
+  with open(image_path, "rb") as img_file:
+    image_lob = img_file.read()
+    print(f"type: {type(image_lob)}")
+  
+  uploaded_url = upload_image_to_oci(image_path, object_name)
+  print(f"Uploaded Image URL: {uploaded_url}")
+  
+  image_summary = summarize_image_to_text(image_path, uploaded_url)
+  print(f"Image Summary: {image_summary}")
+  image_embedding = get_embedding(image_summary)
+  
+  image_id = save_file_info(image_path)
+  save_image_content(image_id, image_path, uploaded_url, image_summary, image_embedding)
+  return {"summary": image_summary, "uploaded_url": uploaded_url}
 
 def process_excel_with_images(file_path):
   file_id = save_file_info(file_path)
@@ -270,15 +297,22 @@ def process_excel_with_images(file_path):
 
   for content in contents:
     if content["type"] == "table":
+      print(f"content_type:table: {content["type"]}")
       summary = summarize_text(content["markdown"])
       embedding = get_embedding(summary)
-      save_content(file_id, content["markdown"], summary, embedding, content_type="table")
+      save_docs_content(file_id, content["markdown"], summary, embedding)
 
     elif content["type"] == "image":
-      summary = summarize_image_to_text("この画像の内容を要約してください。")
-      embedding = get_embedding(summary)
-      save_content(file_id, content["image_url"], summary, embedding, content_type="image")
+      print(f"content_type:image: {content["type"]}")
+      res = summarize_to_db_and_upload_image(
+        image_path=content["image_path"], 
+        object_name=os.path.basename(content["image_path"])
+        )
 
 
 if __name__ == "__main__":
   process_excel_with_images("./data/sample_sales_infos.xlsx")
+  # t_url = upload_image_to_oci("./data/sample_sales_infos.xlsx", "sample_sales_infos.xlsx")
+  # print(t_url)
+  # d_name=download_image_from_oci("sample_sales_infos.xlsx", "./data/tmp_sample_sales_infos.xlsx")
+  # print(d_name)
