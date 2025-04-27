@@ -50,7 +50,7 @@ def summarize_text(text: str) -> str:
   return result
 
 
-def summarize_image_to_text(image_path: str, uploaded_url: str) -> str:
+def summarize_image_to_text(image_path: str, uploaded_url: str = None) -> str:
   with open(image_path, "rb") as img_file:
     image_data = base64.b64encode(img_file.read()).decode("utf-8")
 
@@ -59,7 +59,7 @@ def summarize_image_to_text(image_path: str, uploaded_url: str) -> str:
     "content": [
         {
             "type": "text",
-            "text": "Summarize the following this image.",
+            "text": "Summarize the following this image. Answer in English.",
         },
         {
             "type": "image_url",

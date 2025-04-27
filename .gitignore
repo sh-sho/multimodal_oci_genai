@@ -177,3 +177,5 @@ tmp/*
 *.zip
 images/*
 !images/.gitkeep
+movie_data/*
+!movie_data/.gitkeep
