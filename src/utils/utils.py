@@ -1,5 +1,6 @@
 import base64
 import os
+import shutil
 from dotenv import find_dotenv, load_dotenv
 import oci
 from oci.object_storage import ObjectStorageClient
@@ -108,3 +109,40 @@ def download_image_from_oci(object_name: str, destination_path: str) -> str:
 
     return destination_path
 
+def delete_files(directory: str, file_type: str) -> None:
+    """ Delete files """
+    files = os.listdir(directory)
+    try:
+        for file in files:
+            if file.endswith(file_type):
+                os.remove(os.path.join(directory, file))
+    except FileNotFoundError:
+        print("no target files")
+    except Exception as e:
+        print("Error delete files", e)
+
+def dir_check(directory: str, file_type: str) -> None:
+    """ Check directory """
+    if os.path.exists(directory):
+        try:
+            delete_files(directory, file_type)
+            print(f"success delete files in {directory}")
+        except FileNotFoundError:
+            print("no target files")
+        except Exception as e:
+            print("Error delete files", e)
+    else:
+        try:
+            os.makedirs(directory, exist_ok=True)
+        except Exception as e:
+            print("Error make dirctory ", e)
+
+def delete_dir(directory: str) -> None:
+    """ Delete directory """
+    if os.path.exists(directory):
+        try:
+            shutil.rmtree(directory)
+            print("success delete directory")
+        except Exception as e:
+            print("Error delete directory", e)
+            

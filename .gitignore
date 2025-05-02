@@ -179,3 +179,6 @@ images/*
 !images/.gitkeep
 movie_data/*
 !movie_data/.gitkeep
+split_movie/*
+!split_movie/.gitkeep
+*.png

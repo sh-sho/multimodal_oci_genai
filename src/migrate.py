@@ -39,8 +39,11 @@ import os
 import base64
 from tabulate import tabulate
 from dotenv import load_dotenv, find_dotenv
+from moviepy import  VideoFileClip, ColorClip, CompositeVideoClip, concatenate_videoclips
+from moviepy.audio.io.AudioFileClip import AudioFileClip
+import cv2
 
-from utils.utils import get_embedding, summarize_image_to_text, summarize_text, upload_image_to_oci
+from utils.utils import dir_check, get_embedding, summarize_image_to_text, summarize_text, upload_image_to_oci
 
 _ = load_dotenv(find_dotenv())
 oracledb.init_oracle_client()
@@ -55,6 +58,9 @@ OCI_GENAI_ENDPOINT = os.getenv("OCI_GENAI_ENDPOINT")
 OCI_OS_NAMESPACE = os.getenv("OCI_OS_NAMESPACE")
 OCI_OS_BUCKET_NAME = os.getenv("OCI_OS_BUCKET_NAME")
 OCI_OS_BUCKET_URL = os.getenv("OCI_OS_BUCKET_URL")
+MOVIE_DIRECTORY_PATH = os.getenv("MOVIE_DIRECTORY_PATH")
+SPLIT_MOVIE_DIRECTORY_PATH = os.getenv("SPLIT_MOVIE_DIRECTORY_PATH")
+
 
 config_osaka = oci.config.from_file(file_location=OCI_CONFIG_FILE, profile_name="OSAKA")
 config = oci.config.from_file(file_location=OCI_CONFIG_FILE, profile_name="DEFAULT")
@@ -67,88 +73,6 @@ preamble = """
 質問に対してできる限り詳細な回答をしてください。
 """
 input_text = "Oracleのクラウドについて教えてください"
-
-# chat_detail = ChatDetails(
-#     chat_request=CohereChatRequest(
-#         preamble_override=preamble,
-#         message=input_text,
-#         max_tokens=500,
-#         is_force_single_step=False,
-#         ),
-#     compartment_id=OCI_COMPARTMENT_ID,
-#     serving_mode=OnDemandServingMode(
-#         model_id=model_id
-#     ))
-# chat_response = generative_ai_inference_client.chat(chat_detail)
-
-# res_chat = chat_response.data.chat_response
-# print(f"Cohere Response: {res_chat}")
-
-
-
-# generative_ai_inference_client = GenerativeAiInferenceClient(config=config, service_endpoint=OCI_GENAI_ENDPOINT, retry_strategy=oci.retry.NoneRetryStrategy(), timeout=(10,240))
-# chat_detail = ChatDetails()
-
-# content = TextContent()
-# content.text = input_text
-# message = Message()
-# message.role = "USER"
-# message.content = [content]
-
-# chat_request = GenericChatRequest()
-# chat_request.api_format = BaseChatRequest.API_FORMAT_GENERIC
-# chat_request.messages = [message]
-# chat_request.max_tokens = 600
-# chat_request.temperature = 1
-# chat_request.frequency_penalty = 0
-# chat_request.presence_penalty = 0
-# chat_request.top_p = 0.75
-
-# chat_detail.serving_mode = OnDemandServingMode(model_id="ocid1.generativeaimodel.oc1.ap-osaka-1.amaaaaaask7dceyac2pavq6pya22whj4gvy5l7mpdyrlm646dt7n3cppfxcq")
-# chat_detail.chat_request = chat_request
-# chat_detail.compartment_id = OCI_COMPARTMENT_ID
-
-# chat_response = generative_ai_inference_client.chat(chat_detail)
-# res_chat = chat_response.data.chat_response
-# print(f"Llama Response: {res_chat}")
-
-
-
-
-# AUTH_TYPE = "API_KEY"
-# CONFIG_PROFILE = "OSAKA"
-
-# prompt="Oracleのクラウドについて教えてください"
-
-# # Service endpoint
-# endpoint = "https://inference.generativeai.ap-osaka-1.oci.oraclecloud.com"
-
-# # initialize interface
-# chat = ChatOCIGenAI(
-#   model_id="ocid1.generativeaimodel.oc1.ap-osaka-1.amaaaaaask7dceyac2pavq6pya22whj4gvy5l7mpdyrlm646dt7n3cppfxcq",
-#   service_endpoint=endpoint,
-#   compartment_id=OCI_COMPARTMENT_ID,
-#   provider="meta",
-#   model_kwargs={
-#     "temperature": 1,
-#     "max_tokens": 600,
-#     "frequency_penalty": 0,
-#     "presence_penalty": 0,
-#     "top_p": 0.75
-#   },
-#   auth_type=AUTH_TYPE,
-#   auth_profile=CONFIG_PROFILE
-# )
-
-# messages = [
-#   HumanMessage(content=prompt),
-# ]
-
-# response = chat.invoke(messages)
-# res_chat = response.content
-# print(f"ChatOCIGenAI Response: {res_chat}")
-
-
 
 
 def extract_tables_and_images(file_path, output_dir="images"):
@@ -243,12 +167,10 @@ def save_docs_content(file_id, markdown, summary, embedding):
 
 def save_image_content(file_id, image_path, image_url, summary, embedding):
   sql = """
-        INSERT INTO image_contents (file_id, image_url, summary, embedding, image_blob)
-        VALUES (:file_id, :image_url, :summary, :embedding, empty_blob())
+        INSERT INTO image_contents (file_id, image_path, image_url, summary, embedding, image_blob)
+        VALUES (:file_id, :image_path, :image_url, :summary, :embedding, empty_blob())
         returning image_blob into :blobdata
       """
-  with open(image_path, "rb") as img_file:
-    image_blob = base64.b64encode(img_file.read()).decode("utf-8")
   
   try:
     with oracledb.connect(user=UN, password=PW, dsn=DSN) as conn:
@@ -256,16 +178,27 @@ def save_image_content(file_id, image_path, image_url, summary, embedding):
         blobdata = cursor.var(oracledb.DB_TYPE_BLOB)
         params = {
           'file_id': file_id,
+          'image_path': image_path,
           'image_url': image_url,
           'summary': summary,
           'embedding': str(embedding),
           'blobdata': blobdata
         }
         cursor.execute(sql, params)
-        blobdata.setvalue(0, image_blob)
+        blob, = blobdata.getvalue()
+        offset = 1
+        bufsize = 65536
+        with open(image_path, 'rb') as f:
+            while True:
+                data = f.read(bufsize)
+                if data:
+                    blob.write(data, offset)
+                if len(data) < bufsize:
+                    break
+                offset += bufsize
         
         print(f"Success insert {file_id} into image_contents")
-        conn.commit()
+      conn.commit()
   except oracledb.DatabaseError as e:
     error, = e.args
     print(f"Error at save_content")
@@ -310,9 +243,122 @@ def process_excel_with_images(file_path):
         )
 
 
+# Movies
+def resize_image(input_path, output_path, max_width=2560, max_height=1440):
+  image = cv2.imread(input_path)
+  if image is None:
+    print(f"Failed to load image: {input_path}")
+    return
+
+  height, width = image.shape[:2]
+
+  if width <= max_width and height <= max_height:
+      print(f"Image is already within the size limits: {input_path}")
+      cv2.imwrite(output_path, image)
+      return
+
+  aspect_ratio = width / height
+  if width / max_width > height / max_height:
+    new_width = max_width
+    new_height = int(max_width / aspect_ratio)
+  else:
+    new_height = max_height
+    new_width = int(max_height * aspect_ratio)
+
+  resized_image = cv2.resize(image, (new_width, new_height), interpolation=cv2.INTER_AREA)
+
+  cv2.imwrite(output_path, resized_image)
+  print(f"Resized image saved to: {output_path}")
+
+def summarize_to_db_and_upload_movie(image_path, object_name=None):
+  with open(image_path, "rb") as img_file:
+    image_lob = img_file.read()
+    print(f"type: {type(image_lob)}")
+  
+  uploaded_url = upload_image_to_oci(image_path, object_name)
+  print(f"Uploaded Image URL: {uploaded_url}")
+  
+  image_summary = summarize_image_to_text(image_path, uploaded_url)
+  print(f"Image Summary: {image_summary}")
+  image_embedding = get_embedding(image_summary)
+  
+  image_id = save_file_info(image_path)
+  save_image_content(image_id, image_path, uploaded_url, image_summary, image_embedding)
+  return {"summary": image_summary, "uploaded_url": uploaded_url}
+
+
+def save_frames_at_intervals(
+  video_path: str, 
+  interval_sec: int, 
+  output_dir: str, 
+  base_filename: str
+  ) -> None:
+  try:
+    video = VideoFileClip(video_path)
+    duration_sec = video.duration
+    current_sec = 0
+    frame_idx = 0
+    digit = len(str(int(duration_sec // interval_sec) + 1))
+
+    while current_sec < duration_sec:
+      frame = video.get_frame(current_sec)
+      output_filename = '{}_{}_{:.2f}.png'.format(base_filename, str(frame_idx).zfill(digit), current_sec)
+      output_path = os.path.join(output_dir, output_filename)
+
+      frame_image = Image.fromarray(frame)
+      frame_image.save(output_path)
+      print(f"Saved frame at {current_sec} sec to {output_path}")
+    
+      current_sec += interval_sec
+      frame_idx += 1
+
+    video.close()
+
+  except Exception as e:
+    print(f"Error processing video {video_path}: {e}")
+
+def split_movie(movie_file: str) -> None:
+  try:
+    if movie_file.endswith(".mp4"):
+      movie_path = os.path.join(MOVIE_DIRECTORY_PATH, movie_file)
+      base_filename = movie_file.replace(".mp4", "")
+      save_frames_at_intervals(movie_path, 10, SPLIT_MOVIE_DIRECTORY_PATH, base_filename)
+      print(f"split {MOVIE_DIRECTORY_PATH}/{movie_file}")
+  except Exception as e:
+    print(f"Error splitting movie {movie_file}: {e}")
+  
+def split_movies() -> None:
+    dir_check(SPLIT_MOVIE_DIRECTORY_PATH, ".png")
+    movie_files = os.listdir(MOVIE_DIRECTORY_PATH)
+    print(movie_files)
+    try:
+      for movie_file in movie_files:
+        split_movie(movie_file)
+    except Exception as e:
+      print("Error split movies", e)
+
+def encode_image(image_path: str):
+  with open(image_path, "rb") as image_file:
+    return base64.b64encode(image_file.read()).decode("utf-8")
+
+def process_movies() -> None:
+  
+  split_movies()
+
+  for movie_file in os.listdir(SPLIT_MOVIE_DIRECTORY_PATH):
+    if movie_file.endswith(".png"):
+      image_path = os.path.join(SPLIT_MOVIE_DIRECTORY_PATH, movie_file)
+      print(f"image_path: {image_path}")
+      resize_image(
+        input_path=os.path.join(image_path),
+        output_path=os.path.join(image_path),
+        max_width=2560,
+        max_height=1440
+      )
+      
+      summarize_to_db_and_upload_movie(image_path, object_name=os.path.basename(image_path))
+
+
 if __name__ == "__main__":
-  process_excel_with_images("./data/sample_sales_infos.xlsx")
-  # t_url = upload_image_to_oci("./data/sample_sales_infos.xlsx", "sample_sales_infos.xlsx")
-  # print(t_url)
-  # d_name=download_image_from_oci("sample_sales_infos.xlsx", "./data/tmp_sample_sales_infos.xlsx")
-  # print(d_name)
+  # process_excel_with_images("./data/sample_sales_infos.xlsx")
+  process_movies()
