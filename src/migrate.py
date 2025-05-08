@@ -360,5 +360,5 @@ def process_movies() -> None:
 
 
 if __name__ == "__main__":
-  # process_excel_with_images("./data/sample_sales_infos.xlsx")
-  process_movies()
+  process_excel_with_images("./data/sample_sales_infos.xlsx")
+  # process_movies()

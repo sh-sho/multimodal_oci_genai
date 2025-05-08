@@ -15,6 +15,8 @@ import os
 
 from dotenv import find_dotenv, load_dotenv
 
+from retriever.custom_retriever import CustomTextRetriever
+
 _ = load_dotenv(find_dotenv())
 
 OCI_GENAI_ENDPOINT = os.getenv("OCI_GENAI_ENDPOINT")
@@ -56,6 +58,8 @@ _ = vector_store.add_documents(documents=all_splits)
 # Define prompt for question-answering
 prompt = hub.pull("rlm/rag-prompt")
 
+text_retriever = CustomTextRetriever()
+
 
 # Define state for application
 class State(TypedDict):
@@ -66,13 +70,14 @@ class State(TypedDict):
 
 # Define application steps
 def retrieve(state: State):
-    retrieved_docs = vector_store.similarity_search(state["question"])
+    retrieved_docs = text_retriever.invoke(state["question"])
     return {"context": retrieved_docs}
 
 
 def generate(state: State):
     docs_content = "\n\n".join(doc.page_content for doc in state["context"])
     messages = prompt.invoke({"question": state["question"], "context": docs_content})
+    print(f"Prompt: {messages}")
     response = llm.invoke(messages)
     return {"answer": response.content}
 
@@ -85,7 +90,7 @@ graph = graph_builder.compile()
 
 display(Image(graph.get_graph().draw_mermaid_png()))
 
-result = graph.invoke({"question": "What is Task Decomposition?"})
+result = graph.invoke({"question": "洗濯機について教えてください。"})
 
 print(f'Context: {result["context"]}\n\n')
 print(f'Answer: {result["answer"]}')

@@ -1,3 +1,4 @@
+import base64
 import os
 import re
 from typing import List
@@ -15,7 +16,8 @@ import oracledb
 import numpy as np
 from pandas import array
 
-from utils.utils import get_embedding, summarize_image_to_text
+from retriever.custom_retriever import CustomImageRetriever, CustomTextRetriever
+from utils.utils import chat_with_image, get_embedding, summarize_image_to_text
 
 _ = load_dotenv(find_dotenv())
 oracledb.init_oracle_client()
@@ -32,47 +34,6 @@ SPLIT_MOVIE_DIRECTORY_PATH = os.getenv("SPLIT_MOVIE_DIRECTORY_PATH")
 
 
 ## Text -> Text
-class CustomTextRetriever(BaseRetriever):
-    """
-    Custom retriever.
-    """
-
-    def _get_relevant_documents(
-        self, query: str, *, run_manager: CallbackManagerForRetrieverRun
-    ) -> List[Document]:
-        docs: List[Document] = []
-        embed_query = str(get_embedding(query))
-        try:
-            with oracledb.connect(user=UN, password=PW, dsn=DSN) as connection:
-                with connection.cursor() as cursor:
-                    cursor.setinputsizes(oracledb.DB_TYPE_VECTOR)
-                    select_sql = f"""
-                        SELECT
-                            file_id,
-                            summary
-                        FROM
-                            docs_contents
-                        ORDER BY VECTOR_DISTANCE(embedding, to_vector(:1, 1024, FLOAT32), COSINE)
-                        FETCH FIRST 3 ROWS ONLY
-                    """
-                    cursor.execute(select_sql, [embed_query])
-                    index = 1
-                    for row in cursor:
-                        doc = Document(
-                            page_content=row[1],
-                            metadata={'file_id':row[0], 'vector_index': index}
-                            )
-                        docs.append(doc)
-                        index += 1
-                    # connection.commit()
-                        
-        except oracledb.DatabaseError as e:
-            print(f"Database error: {e}")
-            raise
-        except Exception as e:
-            print("Error Vector Search:", e)
-        
-        return docs
 def get_text_by_text():
     llm = ChatOCIGenAI(
         model_id="cohere.command-r-08-2024",
@@ -92,57 +53,61 @@ def get_text_by_text():
     result = chain.invoke("洗濯機の性能を教えてください。")
     print(result)
 
+## Text -> Image
+def get_text_by_image():
+    llm = ChatOCIGenAI(
+        model_id="cohere.command-r-08-2024",
+        service_endpoint="https://inference.generativeai.ap-osaka-1.oci.oraclecloud.com",
+        compartment_id=OCI_COMPARTMENT_ID,
+        model_kwargs={"temperature": 0.7, "max_tokens": 500},
+        )
+    
+    prompt = ChatPromptTemplate([
+        ("system", "あなたは質疑応答のAIアシスタントです。必ず日本語で答えてください。"),
+        ("human", "{query} 以下のコンテキストに基づいて答えてください。{context}"),
+    ])
+
+    retriever = CustomImageRetriever()
+    chain = {'query': RunnablePassthrough(), 'context': retriever} | prompt | llm | StrOutputParser()
+
+    result_images = chain.invoke("洗濯機の性能を教えてください。")
+    print(result_images)
+    
+    file_id = result_images[0].metadata['file_id']
+    try:
+        with oracledb.connect(user=UN, password=PW, dsn=DSN) as connection:
+            with connection.cursor() as cursor:
+                cursor.setinputsizes(oracledb.DB_TYPE_VECTOR)
+                select_sql = f"""
+                    SELECT
+                        image_blob
+                    FROM
+                        image_contents
+                    WHERE file_id = :1
+                """
+                cursor.execute(select_sql, [file_id])
+                blob, = cursor.fetchone()
+                offset = 1
+                bufsize = 65536
+                with open('tmp_image.png', 'wb') as f:
+                    while True:
+                        data = blob.read(offset, bufsize)
+                        if data:
+                            f.write(data)
+                        if len(data) < bufsize:
+                            break
+                        offset += bufsize
+            connection.close()
+                    
+    except oracledb.DatabaseError as e:
+        print(f"Database error: {e}")
+        raise
+    except Exception as e:
+        print("Error Vector Search:", e)
+    
+
 
 ## Image -> Image
-class CustomImageRetriever(BaseRetriever):
-    """
-    Custom image retriever.
-    """
-
-    def _get_relevant_documents(
-        self, query: str, *, run_manager: CallbackManagerForRetrieverRun
-    ) -> List[Document]:
-        docs: List[Document] = []
-        embed_query = str(get_embedding(query))
-        try:
-            with oracledb.connect(user=UN, password=PW, dsn=DSN) as connection:
-                with connection.cursor() as cursor:
-                    cursor.setinputsizes(oracledb.DB_TYPE_VECTOR)
-                    select_sql = f"""
-                        SELECT
-                            file_id,
-                            image_path,
-                            summary
-                        FROM
-                            image_contents
-                        ORDER BY VECTOR_DISTANCE(embedding, to_vector(:1, 1024, FLOAT32), COSINE)
-                        FETCH FIRST 3 ROWS ONLY
-                    """
-                    cursor.execute(select_sql, [embed_query])
-                    index = 1
-                    for row in cursor:
-                        doc = Document(
-                            page_content=row[2],
-                            metadata={
-                                'file_id':row[0], 
-                                'file_path': row[1], 
-                                'vector_index': index
-                                }
-                            )
-                        docs.append(doc)
-                        index += 1
-                    # connection.commit()
-                connection.close()
-                        
-        except oracledb.DatabaseError as e:
-            print(f"Database error: {e}")
-            raise
-        except Exception as e:
-            print("Error Vector Search:", e)
-        
-        return docs
-
-
 def get_image_by_image():
     llm = ChatOCIGenAI(
         model_id="cohere.command-r-08-2024",
@@ -244,6 +209,36 @@ def get_movie_by_text():
     
 
 
-if __name__ == "__main__":
-    get_movie_by_text()
+## Text -> Text with Image
+def get_text_by_text_with_image(question: str):
+    
+    prompt = ChatPromptTemplate([
+        ("system", "あなたは言語翻訳のAIアシスタントです。日本語を英語に翻訳してください。"),
+        ("human", "{input} "),
+    ])
+    
+    llm = ChatOCIGenAI(
+        model_id="cohere.command-r-08-2024",
+        service_endpoint="https://inference.generativeai.ap-osaka-1.oci.oraclecloud.com",
+        compartment_id=OCI_COMPARTMENT_ID,
+    )
+    chain = {'input': RunnablePassthrough()} | prompt | llm | StrOutputParser()
+    question_en = chain.invoke({"input":question})
+    
+    retriever = CustomImageRetriever()
+    result_images = retriever.invoke(question)
+    print(result_images)
+    
+    image_path = result_images[0].metadata['file_path']
 
+    res = chat_with_image(
+        image_path=image_path,
+        prompt=question_en,
+        system_prompt="You are a AI assistant. Please answer the question based on the image."
+    )
+    return res
+
+  
+if __name__ == "__main__":
+    response = get_text_by_text_with_image(question = "洗濯機の使い方を説明する情報を探してください。")
+    print(response)
