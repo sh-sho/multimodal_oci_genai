@@ -16,7 +16,7 @@ import oracledb
 import numpy as np
 from pandas import array
 
-from retriever.custom_retriever import CustomImageRetriever, CustomTextRetriever
+from retriever.custom_retriever import CustomImageRetriever, CustomMarkdownRetriever, CustomTextRetriever
 from utils.utils import chat_with_image, get_embedding, summarize_image_to_text
 
 _ = load_dotenv(find_dotenv())
@@ -34,10 +34,10 @@ SPLIT_MOVIE_DIRECTORY_PATH = os.getenv("SPLIT_MOVIE_DIRECTORY_PATH")
 
 
 ## Text -> Text
-def get_text_by_text():
+def get_text_by_text(query: str):
     llm = ChatOCIGenAI(
         model_id="cohere.command-r-08-2024",
-        service_endpoint="https://inference.generativeai.ap-osaka-1.oci.oraclecloud.com",
+        service_endpoint="https://inference.generativeai.us-chicago-1.oci.oraclecloud.com",
         compartment_id=OCI_COMPARTMENT_ID,
         model_kwargs={"temperature": 0.7, "max_tokens": 500},
         )
@@ -50,16 +50,45 @@ def get_text_by_text():
     retriever = CustomTextRetriever()
     chain = {'query': RunnablePassthrough(), 'context': retriever} | prompt | llm | StrOutputParser()
 
-    result = chain.invoke("洗濯機の性能を教えてください。")
+    result = chain.invoke(query)
     print(result)
 
-## Text -> Image
-def get_text_by_image():
+## Text -> Text with Markdown
+def get_text_by_text_with_markdown(query: str):
     llm = ChatOCIGenAI(
         model_id="cohere.command-r-08-2024",
-        service_endpoint="https://inference.generativeai.ap-osaka-1.oci.oraclecloud.com",
+        service_endpoint="https://inference.generativeai.us-chicago-1.oci.oraclecloud.com",
         compartment_id=OCI_COMPARTMENT_ID,
-        model_kwargs={"temperature": 0.7, "max_tokens": 500},
+        )
+    
+    prompt = ChatPromptTemplate([
+        ("system", "あなたは質疑応答のAIアシスタントです。必ず日本語で答えてください。"),
+        ("human", """
+         以下のコンテキストに基づいて質問に答えてください。
+         ** 質問 **
+          {query} 
+          
+        ** コンテキスト **
+        {context}
+        """),
+    ])
+
+    retriever = CustomMarkdownRetriever()
+    chain = {'query': RunnablePassthrough(), 'context': retriever} | prompt | llm | StrOutputParser()
+
+    result = chain.invoke(query)
+    return result
+
+
+## Text -> Image
+def get_text_by_image(query: str):
+    """
+    Text to Image
+    """
+    llm = ChatOCIGenAI(
+        model_id="cohere.command-r-08-2024",
+        service_endpoint="https://inference.generativeai.us-chicago-1.oci.oraclecloud.com",
+        compartment_id=OCI_COMPARTMENT_ID,
         )
     
     prompt = ChatPromptTemplate([
@@ -70,7 +99,7 @@ def get_text_by_image():
     retriever = CustomImageRetriever()
     chain = {'query': RunnablePassthrough(), 'context': retriever} | prompt | llm | StrOutputParser()
 
-    result_images = chain.invoke("洗濯機の性能を教えてください。")
+    result_images = chain.invoke(query)
     print(result_images)
     
     file_id = result_images[0].metadata['file_id']
@@ -105,13 +134,14 @@ def get_text_by_image():
     except Exception as e:
         print("Error Vector Search:", e)
     
+    return result_images
 
 
 ## Image -> Image
 def get_image_by_image():
     llm = ChatOCIGenAI(
         model_id="cohere.command-r-08-2024",
-        service_endpoint="https://inference.generativeai.ap-osaka-1.oci.oraclecloud.com",
+        service_endpoint="https://inference.generativeai.us-chicago-1.oci.oraclecloud.com",
         compartment_id=OCI_COMPARTMENT_ID,
         model_kwargs={"temperature": 0.7, "max_tokens": 500},
         )
@@ -184,7 +214,7 @@ def simulate_rename_files_in_directory(file_path: str, pattern: str, replacement
 def get_movie_by_text():
     llm = ChatOCIGenAI(
         model_id="cohere.command-r-08-2024",
-        service_endpoint="https://inference.generativeai.ap-osaka-1.oci.oraclecloud.com",
+        service_endpoint="https://inference.generativeai.us-chicago-1.oci.oraclecloud.com",
         compartment_id=OCI_COMPARTMENT_ID,
         model_kwargs={"temperature": 0.7, "max_tokens": 500},
     )
@@ -219,7 +249,7 @@ def get_text_by_text_with_image(question: str):
     
     llm = ChatOCIGenAI(
         model_id="cohere.command-r-08-2024",
-        service_endpoint="https://inference.generativeai.ap-osaka-1.oci.oraclecloud.com",
+        service_endpoint="https://inference.generativeai.us-chicago-1.oci.oraclecloud.com",
         compartment_id=OCI_COMPARTMENT_ID,
     )
     chain = {'input': RunnablePassthrough()} | prompt | llm | StrOutputParser()
@@ -240,5 +270,5 @@ def get_text_by_text_with_image(question: str):
 
   
 if __name__ == "__main__":
-    response = get_text_by_text_with_image(question = "洗濯機の使い方を説明する情報を探してください。")
+    response = get_text_by_text_with_markdown("2024年のハードウェアシステムズのTotalの売上を教えてください。")
     print(response)

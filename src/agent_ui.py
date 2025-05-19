@@ -16,7 +16,7 @@ OCI_COMPARTMENT_ID = os.getenv("OCI_COMPARTMENT_ID")
 def create_agent_chain():
     chat = ChatOCIGenAI(
         model_id="cohere.command-r-08-2024",
-        service_endpoint="https://inference.generativeai.ap-osaka-1.oci.oraclecloud.com",
+        service_endpoint="https://inference.generativeai.us-chicago-1.oci.oraclecloud.com",
         compartment_id=OCI_COMPARTMENT_ID,
         model_kwargs={"temperature": 0.7, "max_tokens": 500},
     )

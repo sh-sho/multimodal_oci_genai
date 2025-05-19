@@ -78,22 +78,25 @@ input_text = "Oracleのクラウドについて教えてください"
 def extract_tables_and_images(file_path, output_dir="images"):
   os.makedirs(output_dir, exist_ok=True)
   wb = load_workbook(file_path)
+  e_wb = pd.ExcelFile(file_path)
   result = []
 
+  # check_sheets = {"Segmental info & Opex", "Corporate_Overview"}
   for sheet_name in wb.sheetnames:
+    # if not sheet_name in check_sheets:
+    #   continue
     ws = wb[sheet_name]
     print(f"worksheet: {ws}")
     # --- 表の抽出 ---
-    df = pd.read_excel(file_path, sheet_name=sheet_name)
-    if not df.empty:
-      markdown = tabulate(df.head(10), headers='keys', tablefmt='github')
-      print(f"Markdown Table:\n{markdown}")
-      result.append({
-        "type": "table",
-        "sheet": sheet_name,
-        "markdown": markdown,
-        "raw": df
-      })
+    df = pd.read_excel(e_wb, sheet_name=sheet_name)
+    markdown = df.to_markdown(index=False)
+    print(f"Markdown Table:\n{markdown}")
+    result.append({
+      "type": "table",
+      "sheet": sheet_name,
+      "markdown": markdown,
+      "raw": df
+    })
 
     # --- 画像の抽出 ---
     for image in ws._images:
@@ -106,8 +109,7 @@ def extract_tables_and_images(file_path, output_dir="images"):
         img_path = os.path.join(output_dir, img_name)
         img.save(img_path)
         print(f"Image Path: {img_path}")
-
-        # Base64に変換（任意）
+        
         with open(img_path, "rb") as f:
           base64_str = base64.b64encode(f.read()).decode("utf-8")
           data_url = f"data:image/png;base64,{base64_str}"
@@ -216,6 +218,7 @@ def summarize_to_db_and_upload_image(image_path, object_name=None):
   uploaded_url = upload_image_to_oci(image_path, object_name)
   print(f"Uploaded Image URL: {uploaded_url}")
   
+  print(f"image_path: {image_path}")
   image_summary = summarize_image_to_text(image_path, uploaded_url)
   print(f"Image Summary: {image_summary}")
   image_embedding = get_embedding(image_summary)
@@ -280,7 +283,8 @@ def summarize_to_db_and_upload_movie(image_path, object_name=None):
   
   image_summary = summarize_image_to_text(image_path, uploaded_url)
   print(f"Image Summary: {image_summary}")
-  image_embedding = get_embedding(image_summary)
+  if image_summary is not None:
+    image_embedding = get_embedding(image_summary)
   
   image_id = save_file_info(image_path)
   save_image_content(image_id, image_path, uploaded_url, image_summary, image_embedding)
@@ -358,7 +362,37 @@ def process_movies() -> None:
       
       summarize_to_db_and_upload_movie(image_path, object_name=os.path.basename(image_path))
 
+def excel_markdown(file_path):
+  wb = load_workbook(file_path)
+  e_wb = pd.ExcelFile(file_path)
+  result = []
+
+  for sheet_name in wb.sheetnames:
+    # if not sheet_name in check_sheets:
+    #   continue
+    ws = wb[sheet_name]
+    print(f"worksheet: {ws}")
+    df = pd.read_excel(e_wb, sheet_name=sheet_name)
+    markdown = df.to_markdown(index=False)
+    print(f"Markdown Table:\n{markdown}")
+    result.append({
+      "type": "table",
+      "sheet": sheet_name,
+      "markdown": markdown,
+      "raw": df
+    })
+  return result
+
+def process_excel(file_path: str) -> None:
+  file_id = save_file_info(file_path)
+  contents = excel_markdown(file_path)
+  for content in contents:
+    summary = summarize_text(content["markdown"])
+    embedding = get_embedding(summary)
+    save_docs_content(file_id, content["markdown"], summary, embedding)
+
 
 if __name__ == "__main__":
-  process_excel_with_images("./data/sample_sales_infos.xlsx")
-  # process_movies()
+  process_excel_with_images("./data/fy25q3-supplemental.xlsx")
+  summarize_to_db_and_upload_image(image_path="./images/net_income.png", object_name="net_income.png")
+  summarize_to_db_and_upload_image(image_path="./images/revenue.png", object_name="revenue.png")

@@ -8,6 +8,7 @@ from langchain_core.documents import Document
 from langchain.callbacks.manager import CallbackManagerForRetrieverRun
 from langchain.schema import BaseRetriever
 import oracledb
+import pandas as pd
 
 from utils.utils import get_embedding, summarize_image_to_text
 
@@ -59,6 +60,56 @@ class CustomTextRetriever(BaseRetriever):
         except Exception as e:
             print("Error Vector Search:", e)
         
+        return docs
+    
+
+## Text -> Markdown
+class CustomMarkdownRetriever(BaseRetriever):
+    """
+    Custom retriever.
+    """
+
+    def _get_relevant_documents(
+        self, query: str, *, run_manager: CallbackManagerForRetrieverRun
+    ) -> List[Document]:
+        docs: List[Document] = []
+        embed_query = str(get_embedding(query))
+        try:
+            with oracledb.connect(user=UN, password=PW, dsn=DSN) as connection:
+                with connection.cursor() as cursor:
+                    df = pd.DataFrame()
+                    cursor.setinputsizes(oracledb.DB_TYPE_VECTOR)
+                    select_sql = f"""
+                        SELECT
+                            file_id,
+                            markdown
+                        FROM
+                            docs_contents
+                        ORDER BY VECTOR_DISTANCE(embedding, to_vector(:1, 1024, FLOAT32), COSINE)
+                        FETCH FIRST 3 ROWS ONLY
+                    """
+                    cursor.execute(select_sql, [embed_query])
+                    for row in cursor:
+                        df_tmp = pd.DataFrame([[row[0], row[1].read()]],
+                                                columns=["file_id", "markdown"])
+                        df = pd.concat([df, df_tmp], ignore_index=True)
+                    
+                    for i in range(len(df)):
+                        file_id = df.iloc[i, 0]
+                        markdown = df.iloc[i, 1]
+                        # print(f"file_id: {file_id}, markdown: {markdown}")
+                        doc = Document(
+                            page_content=markdown,
+                            metadata={'file_id':file_id, 'vector_index': i}
+                            )
+                        docs.append(doc)
+                connection.close()
+        except oracledb.DatabaseError as e:
+            print(f"Database error: {e}")
+            raise
+        except Exception as e:
+            print("Error Vector Search:", e)
+
         return docs
     
 ## Text -> Image

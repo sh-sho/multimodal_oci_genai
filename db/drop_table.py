@@ -15,6 +15,9 @@ if __name__ == "__main__":
     try:
         with oracledb.connect(user=UN, password=PW, dsn=DSN) as conn:
             with conn.cursor() as cursor:
+                cursor.execute("DROP TABLE IF EXISTS multimodal_contents")
+                print("drop table multimodal_contents")
+                
                 cursor.execute("DROP TABLE IF EXISTS image_contents")
                 print("drop table image_contents")
                 
