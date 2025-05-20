@@ -177,6 +177,7 @@ tmp/*
 *.zip
 images/*
 !images/.gitkeep
+!images/appliances/*
 movie_data/*
 !movie_data/.gitkeep
 split_movie/*
