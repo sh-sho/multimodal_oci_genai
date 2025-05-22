@@ -183,4 +183,3 @@ movie_data/*
 split_movie/*
 !split_movie/.gitkeep
 *.png
-mcp/*
