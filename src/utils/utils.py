@@ -1,6 +1,12 @@
 import base64
 import os
+import oci
 from dotenv import find_dotenv, load_dotenv
+from oci.generative_ai_inference import GenerativeAiInferenceClient
+from oci.generative_ai_inference.models import (
+    EmbedTextDetails,
+    OnDemandServingMode,
+)
 from langchain_community.embeddings import OCIGenAIEmbeddings
 from langchain_core.prompts import PromptTemplate
 from langchain.schema.runnable import RunnablePassthrough
@@ -11,6 +17,15 @@ from langchain_core.output_parsers import StrOutputParser
 _ = load_dotenv(find_dotenv())
 OCI_COMPARTMENT_ID = os.getenv("OCI_COMPARTMENT_ID")
 
+OCI_CONFIG_FILE = "~/.oci/config"
+OCI_COMPARTMENT_ID = os.getenv("OCI_COMPARTMENT_ID")
+
+config = oci.config.from_file(file_location=OCI_CONFIG_FILE, profile_name="DEFAULT")
+generative_ai_inference_client = GenerativeAiInferenceClient(
+    config=config,
+    service_endpoint="https://inference.generativeai.us-chicago-1.oci.oraclecloud.com"
+    )   
+
 def get_embedding(text: str) -> list:
   embeddings = OCIGenAIEmbeddings(
     model_id="cohere.embed-multilingual-v3.0",
@@ -19,6 +34,20 @@ def get_embedding(text: str) -> list:
   )
   return embeddings.embed_query(text)
 
+def get_image_embedding(image_path: str):
+  with open("./" + image_path, "rb") as img_file:
+    image_data = base64.b64encode(img_file.read()).decode("utf-8")
+    data_uri = f"data:image/png;base64,{image_data}"
+
+  model_id = "cohere.embed-multilingual-image-v3.0"
+  embed_image_detail = EmbedTextDetails()
+  embed_image_detail.serving_mode = OnDemandServingMode(model_id=model_id)
+  embed_image_detail.compartment_id = OCI_COMPARTMENT_ID
+
+  embed_image_detail.inputs = [data_uri]
+  embed_image_detail.input_type = "IMAGE"
+  embedding = generative_ai_inference_client.embed_text(embed_image_detail)
+  return embedding.data.embeddings[0]
 
 def summarize_text(text: str) -> str:
   prompt = PromptTemplate(

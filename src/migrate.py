@@ -8,7 +8,7 @@ import io
 import base64
 from dotenv import load_dotenv, find_dotenv
 
-from utils.utils import get_embedding, summarize_image_to_text, summarize_text, upload_image_to_oci
+from utils.utils import get_embedding, summarize_image_to_text, summarize_text, get_image_embedding
 
 _ = load_dotenv(find_dotenv())
 oracledb.init_oracle_client()
@@ -154,7 +154,8 @@ def summarize_to_db_and_upload_image(image_path):
   print(f"image_path: {image_path}")
   image_summary = summarize_image_to_text(image_path)
   print(f"Image Summary: {image_summary}")
-  image_embedding = get_embedding(image_summary)
+  # image_embedding = get_embedding(image_summary)
+  image_embedding = get_image_embedding(image_path)
   
   image_id = save_file_info(image_path)
   save_image_content(image_id, image_path, image_summary, image_embedding)

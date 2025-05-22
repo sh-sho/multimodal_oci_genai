@@ -15,6 +15,9 @@ if __name__ == "__main__":
     try:
         with oracledb.connect(user=UN, password=PW, dsn=DSN) as conn:
             with conn.cursor() as cursor:
+                cursor.execute("TRUNCATE TABLE embedding_contents")
+                print("cleared table embedding_contents")
+                
                 # cursor.execute("TRUNCATE TABLE multimodal_contents")
                 # print("cleared table multimodal_contents")
                 

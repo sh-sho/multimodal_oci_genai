@@ -115,8 +115,8 @@ nvidia-cusparselt-cu12==0.6.3
 nvidia-nccl-cu12==2.26.2
 nvidia-nvjitlink-cu12==12.6.85
 nvidia-nvtx-cu12==12.6.77
-oci==2.150.1
-oci-cli==3.54.3
+oci==2.152.0
+oci-cli==3.56.0
 olefile==0.47
 omegaconf==2.3.0
 onnx==1.18.0
