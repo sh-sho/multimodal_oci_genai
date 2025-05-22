@@ -5,7 +5,7 @@
 
 ## 環境
 以下の環境を前提に動作確認を行いました。
-![alt text](./images/readme_images/oci.png)
+![alt text](./data/oci.png)
 
 ### Oracle Database 23aiの構築
 Oracle Database 23aiの構築方法は、OCI Tutorialの「[Oracle Database編 - Base Database Service (BaseDB) を使ってみよう](https://oracle-japan.github.io/ocitutorials/basedb)」か、「[Oracle Database - Oracle AI Vector Searchを使ってみよう](https://oracle-japan.github.io/ocitutorials/ai-vector-search)」を参考にしてください。
