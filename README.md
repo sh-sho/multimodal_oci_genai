@@ -1,6 +1,6 @@
 # Multimodal_oci_genai
 
-2025/05/23に開催されたOracle Developer Day 2025のデモコードです。
+2025/05/23に開催されたOracle Developer Day 2025 「OCI Generateive AI におけるマルチモーダル検索の活用」のデモコードです。
 
 
 ## 環境
